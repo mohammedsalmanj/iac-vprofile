@@ -1,5 +1,5 @@
-#staging workflow for terraform
 name: "vprofile-IAC"
+
 on:
   push:
     branches:
@@ -13,50 +13,58 @@ on:
     paths:
       - 'terraform/**'
 
+# Workflow-level environment variables (secrets referenced here)
 env:
-  # credential for deployments to aws 
-  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  # add s3 bucket name for terraform state file
-  S3_BUCKET: ${{ secrets.BUCKET_TF_STATE }}
   AWS_REGION: us-east-1
-  EKS_CLUSTER_NAME: vprofile-eks
+  S3_BUCKET: ${{ secrets.BUCKET_TF_STATE }}
 
-  #jobs
-  jobs:
-    terraform:
-      name: "apply Terraform changes" #name for the job to apply terraform code changes  
-      runs-on: ubuntu-latest
-      defaults:
-        run:
-          shell: bash
+jobs:
+  terraform:
+    name: "Apply Terraform changes"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
         working-directory: ./terraform
 
-      steps:
-        - name: "Checkout source code"
-          uses: actions/checkout@v4
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
 
-        - name: "Setup Terraform with specific version"
-          uses: hashicorp/setup-terraform@v2
-          with:
-            terraform_version: "1.6.3"
+      - name: Configure AWS credentials
+        # Prefer OIDC / role-to-assume in future. Using secrets here as a simple option.
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-        - name: terraform init
-          id: init
-          run: terraform init -backend-config="bucket=$BUCKET_TF_STATE"
+      - name: Setup Terraform with specific version
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: "1.6.3"
 
-        - name: terraform format
-          id: fmt
-          run: terraform fmt -check
-        - name: terraform validate
-          id: validate
-          run: terraform validate
+      - name: Terraform init (backend config)
+        id: init
+        run: |
+          terraform init -backend-config="bucket=${S3_BUCKET}" \
+                         -backend-config="region=${AWS_REGION}" \
+                         -backend-config="key=terraform.tfstate" \
+                         -backend-config="encrypt=true"
 
-        - name: terraform plan
-          id: plan
-          run: terraform plan -no-color -input=false -out planfile
-          continue-on-error: true
+      - name: Terraform fmt (check)
+        id: fmt
+        run: terraform fmt -check
 
-        - name: terraform plan status 
-          if: steps.plan.outcome == 'failure'
-          run: exit 1
+      - name: Terraform validate
+        id: validate
+        run: terraform validate
+
+      - name: Terraform plan
+        id: plan
+        run: terraform plan -no-color -input=false -out=planfile
+        continue-on-error: true
+
+      - name: Terraform plan status
+        if: steps.plan.outcome == 'failure'
+        run: echo "Terraform plan failed. exit code: $?"
