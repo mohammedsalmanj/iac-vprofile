@@ -67,4 +67,4 @@ jobs:
 
       - name: Terraform plan status
         if: steps.plan.outcome == 'failure'
-        run: echo "Terraform plan failed. exit code: $?"
+        run: exitcode 1
